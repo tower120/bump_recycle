@@ -27,30 +27,13 @@ struct ChunkHeader{
 }
 impl ChunkHeader{
     /// Pointer has align 8.
-    pub fn data_ptr(&self) -> *mut u8 {
-        let ptr = self as *const Self as *const u8;
+    pub fn data_ptr(this: NonNull<Self>) -> *mut u8 {
+        let ptr: *mut u8 = this.as_ptr().cast();
         let p = unsafe{
             ptr.add(size_of::<ChunkHeader>())
-        }.cast_mut();
+        };
         p
     }
-
-    pub fn data_ptr_mut(&mut self) -> *mut u8 {
-        let ptr = self as *mut Self as *mut u8;
-        let p = unsafe{
-            ptr.add(size_of::<ChunkHeader>())
-        }/* .cast_mut() */;
-        p
-    }
-
-    pub fn data_ptr_mut2(ptr: *mut u8) -> *mut u8 {
-        // let ptr = self as *mut Self as *mut u8;
-        let p = unsafe{
-            ptr.add(size_of::<ChunkHeader>())
-        }/* .cast_mut() */;
-        p
-    }
-
 
     // TODO: use allocator
     pub fn allocate_chunk(prev_chunk: *mut ChunkHeader, capacity: usize) -> NonNull<Self> {
@@ -83,11 +66,6 @@ impl ChunkHeader{
 #[repr(transparent)]
 struct EmptyChunkHeader(ChunkHeader);
 unsafe impl Sync for EmptyChunkHeader {}
-impl EmptyChunkHeader {
-    fn get(&'static self) -> NonNull<ChunkHeader> {
-        NonNull::from(&self.0)
-    }
-}
 
 static EMPTY_CHUNK: EmptyChunkHeader = EmptyChunkHeader(ChunkHeader {
     prev_chunk: null_mut(),
@@ -108,8 +86,7 @@ pub struct ReBump{
 impl ReBump{
     pub /* const */ fn new() -> Self {
         Self {
-            root_chunk: Cell::new(EMPTY_CHUNK.get()
-                /* NonNull::from(&EMPTY_CHUNK.0) */),
+            root_chunk: Cell::new(NonNull::from(&EMPTY_CHUNK.0)),
             free_blocks: from_fn(|_| const {
                 Cell::new(null_mut())
             }),
@@ -175,47 +152,46 @@ impl ReBump{
         assert!(block_class_index < 32, "Required layout size too big.");
 
         let block_ptr = (||{
-            /* // 1. Try `free_blocks` first
+            // 1. Try `free_blocks` first
             let free_block_root = unsafe{ self.free_blocks.get_unchecked(block_class_index) };
             if let Some(ptr) = Self::pop_free_block(free_block_root){
                 return ptr;
-            } */
+            }
 
+            let mut chunk_ptr = self.root_chunk.get();
             let block_size = 1usize<<block_size_exp;
+
+            // 2. "Allocate" in chunk.
+            // 2.1 Check for new chunk allocation.
             {
-                // 2. Try "allocate" in chunk
-                let mut chunk = unsafe{ self.root_chunk.get().as_ref() };
+                let chunk = unsafe{ self.root_chunk.get().as_ref() };
                 let requested_len = chunk.len.get() + block_size;
                 if requested_len > chunk.capacity{
                     hint::cold_path();
+
+                    // TODO: push biggest possible leftover as free block.
+
                     let new_capacity =
                         cmp::max(
                             align_up::<2>(requested_len),
                             chunk.capacity * 2
                         );
-                    let mut new_chunk_ptr = ChunkHeader::allocate_chunk(self.root_chunk.get().as_ptr(), new_capacity);
-                    self.root_chunk.set(new_chunk_ptr);
-                    chunk = unsafe{ new_chunk_ptr.as_mut()};
+                    chunk_ptr = ChunkHeader::allocate_chunk(self.root_chunk.get().as_ptr(), new_capacity);
+                    self.root_chunk.set(chunk_ptr);
                 }
             }
 
-            // #
-            let chunk_ptr = self.root_chunk.get();
+            // 2.2 Update len and return data pointer.
             let chunk = unsafe{ self.root_chunk.get().as_mut() };
 
             let start = chunk.len.get();
             chunk.len.set(start + block_size);
-            // chunk.len.update(|len| len + block_size);
-            //chunk.data_ptr()
 
-            // unsafe{ chunk.data_ptr_mut().add(start) }
-
-            let data_start = ChunkHeader::data_ptr_mut2(chunk_ptr.as_ptr().cast());
-            unsafe{ data_start.add(start) }
+            let data_ptr = ChunkHeader::data_ptr(chunk_ptr);
+            unsafe{ data_ptr.add(start) }
         })();
 
         let ptr = align_up_mut_ptr(unsafe{ block_ptr.add(size_of::<BlockHeader>()) }, layout.align());
-        // let ptr = unsafe{ block_ptr.add(size_of::<BlockHeader>()) };
         // Write BlockHeader
         unsafe {
             let block_header_ptr: *mut BlockHeader = ptr.sub(size_of::<BlockHeader>()).cast();
@@ -246,7 +222,7 @@ impl ReBump{
     }
 
     unsafe fn drop_chunk_chain(mut chunk_head_ptr: *mut ChunkHeader){
-        while chunk_head_ptr/* .cast_const() */ != /* &EMPTY_CHUNK.0 */ EMPTY_CHUNK.get().as_ptr() {
+        while chunk_head_ptr.cast_const() != &EMPTY_CHUNK.0 {
             let next_chunk_head_ptr = {
                 let chunk = unsafe{ chunk_head_ptr.as_ref_unchecked() };
                 chunk.prev_chunk
@@ -310,7 +286,7 @@ mod tests{
     fn test(){
         let allocator = ReBump::new();
         let mut vec: Vec<i32, ReBump> = Vec::new_in(allocator);
-        vec.reserve(100);
+        // vec.reserve(100);
         // vec.extend(0..80);
         for i in 0..80{
             vec.push(i);
