@@ -8,6 +8,15 @@ allocator_api = []
 
 [dependencies]
 
-
 [dev-dependencies]
 itertools = "0.15"
+criterion = "0.8.2"
+bumpalo = {version = "=3.20.3", features=["allocator_api"]}
+
+[[bench]]
+name = "alloc"
+harness = false
+
+[[bench]]
+name = "vec"
+harness = false

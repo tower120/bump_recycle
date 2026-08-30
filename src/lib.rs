@@ -52,6 +52,7 @@ impl ChunkHeader{
         this
     }
 
+    #[inline]
     pub unsafe fn deallocate_chunk(this: *mut Self){
         use std::alloc::*;
         let capacity = unsafe{ (*this).capacity };
@@ -131,7 +132,9 @@ impl ReBump{
         }.pad_to_align()
     }
 
-    pub(crate) fn allocate(&self, layout: std::alloc::Layout)
+
+    #[inline]
+    pub fn allocate(&self, layout: std::alloc::Layout)
         -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError>
     {
         if layout.size() == 0{
@@ -207,7 +210,7 @@ impl ReBump{
         return Ok(unsafe{NonNull::new_unchecked(slice)})
     }
 
-    pub(crate) unsafe fn deallocate(
+    pub unsafe fn deallocate(
         &self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout
     ) {
         let ptr = ptr.as_ptr();
@@ -221,6 +224,7 @@ impl ReBump{
         self.alloc_balance.update(|i| i-1);
     }
 
+    #[inline]
     unsafe fn drop_chunk_chain(mut chunk_head_ptr: *mut ChunkHeader){
         while chunk_head_ptr.cast_const() != &EMPTY_CHUNK.0 {
             let next_chunk_head_ptr = {
@@ -236,6 +240,7 @@ impl ReBump{
 }
 
 impl Drop for ReBump{
+    #[inline]
     fn drop(&mut self) {
         unsafe{
             let root_chunk_ptr = self.root_chunk.get().as_ptr();
