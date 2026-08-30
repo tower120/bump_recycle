@@ -1,0 +1,13 @@
+[package]
+name = "recycled_bump"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+allocator_api = []
+
+[dependencies]
+
+
+[dev-dependencies]
+itertools = "0.15"
