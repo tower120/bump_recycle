@@ -4,12 +4,21 @@
 //! if you can tolerate all your allocation sizes being aligned to POT,
 //! and you allocate/deallocate more or less the same layout sizes.
 //!
+//! Also, being able to reclaim deallocated blocks - means that it can be used inside
+//! your `struct` as an internal memory storage source, for all data and containers.
+//! On top of allocation/deallocation speed - that grants some memory locality.
+//!
 //! See `/examples` for motivation examples.
 //!
 //! # How it works
 //!
-//! All memory allocated in POT size blocks. When you deallocate - that block
-//! stored in a linked list of blocks with the same size.
+//! All memory allocated in POT size blocks.
+//!
+//! When you deallocate - that block
+//! stored in intrusive linked list of blocks of the same size.
+//! Roots of lists stored in a small `[*mut u8; 32]` table -
+//! each table index corresponds to `2^index` block size.
+//!
 //! When you allocate - [`ReBump`] first look in a table for requested size
 //! (aligned to POT) - if there is one - it returns it, if no - it works exactly
 //! as bumpalo.

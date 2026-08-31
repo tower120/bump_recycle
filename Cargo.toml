@@ -1,7 +1,12 @@
 [package]
-name = "recycled_bump"
-version = "0.1.0"
+name = "bump_recycle"
+version = "0.1.0-alpha"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+categories = ["memory-management"]
+repository = "https://github.com/tower120/bump_recycle"
+keywords = ["allocator", "arena", "bump", "reuse", "recycle"]
+description = "Bump allocator that can reuse deallocated memory."
 
 [features]
 allocator_api = []
