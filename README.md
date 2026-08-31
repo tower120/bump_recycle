@@ -1,7 +1,9 @@
 # Recyclable bump allocator
 
 `bump_recycle` is a bump allocator (ala `bumpalo`), that can reuse deallocated
-memory.
+memory blocks.
+
+See the documentation for details.
 
 ```rust
 let mut alloc = ReBump::new();
@@ -19,5 +21,5 @@ vec2.extend([1.0,2.0,3.0]);
 
 # Known alternatives
 
-* (bumpalo)[https://crates.io/crates/bumpalo]
-* (bump_scope)[https://crates.io/crates/bump-scope]
+* [bumpalo](https://crates.io/crates/bumpalo)
+* [bump_scope](https://crates.io/crates/bump-scope)

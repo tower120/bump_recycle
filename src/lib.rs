@@ -17,9 +17,9 @@
 //! ## Design choice
 //!
 //! [`ReBump`] does not unify or split deallocated blocks - thus it can only reuse
-//! blocks of these sizes (aligned to POT). This is deliberately to simplify
+//! blocks of these exact sizes (aligned to POT). This is deliberately to simplify
 //! allocation process. Since blocks aligned to POT sizes - when you work with
-//! growing `Vec`s - you'll most likely will have blocks of needed sizes.
+//! growing `Vec`s - you most likely will have blocks of needed sizes.
 //!
 //! ## Align
 //!
@@ -44,7 +44,7 @@
 //!
 //! # Features
 //!
-//! * `allocator_api` - for Rust's [allocation_api](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
+//! * `allocator_api` - for Rust's [allocator_api](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
 //! support.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
