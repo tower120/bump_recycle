@@ -1,17 +1,36 @@
-#![cfg_attr(feature = "allocator_api", feature(allocator_api))]
-// #![feature(const_array)]
+//! # Maximum size
+//!
+//! Maximum size this allocator can allocate is `u32::MAX * 8` bytes.
+//!
+//! Open an issue if you need bigger allocations.
+//!
+//! # ZST
+//!
+//! ZST does not handled specially.
+//! Allocator will use minimal possible block (ALIGN size) for all ZST allocations.
+//! This is to minimize branching.
+//! Such behavior does not brake `allocator_api` contract.
+//!
+//! Open an issue - if you think this should be different.
 
-use std::{alloc::Layout, array::from_fn, cell::Cell, cmp, hint, ptr::{self, NonNull, null_mut}};
+#![cfg_attr(feature = "allocator_api", feature(allocator_api))]
+
+use std::{
+    alloc::Layout,
+    array::from_fn,
+    cell::Cell,
+    ptr::{self, NonNull, null_mut},
+    cmp, hint,
+};
 
 #[cfg(feature = "allocator_api")]
 mod allocator_api;
 
 /// Amount of block classes skipped in `free_blocks` "registry".
-pub const BLOCK_CLASS_SKIP: usize = 3;              // TODO: ALIGN dependent?
-pub const MAX_SIZE: usize = u32::MAX as usize * 8;  // TODO: use ALIGN?
+const BLOCK_CLASS_SKIP: usize = 3;              // TODO: ALIGN dependent?
 
 /// Align used both for Chunk and for Block.
-pub const ALIGN: usize = 8;
+const ALIGN: usize = 8;
 
 struct BlockHeader{
     ptr_offset: u32,
@@ -29,13 +48,12 @@ struct ChunkHeader{
     capacity: usize,
 }
 impl ChunkHeader{
-    /// Pointer has align ALIGN.
+    /// Pointer has ALIGN align.
     pub fn data_ptr(this: NonNull<Self>) -> *mut u8 {
         let ptr: *mut u8 = this.as_ptr().cast();
-        let p = unsafe{
+        unsafe{
             ptr.add(size_of::<ChunkHeader>())
-        };
-        p
+        }
     }
 
     // TODO: use allocator
@@ -82,19 +100,17 @@ pub struct ReBump{
 
     /// each block size = 2^index + 8
     free_blocks: [Cell<*mut u8>; 32],
-
-    /// Allocation/deallocation balance. If 0 - everything deallocated.
-    alloc_balance: Cell<i64>,
 }
 
+unsafe impl Send for ReBump{}
+
 impl ReBump{
-    pub /* const */ fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             root_chunk: Cell::new(NonNull::from(&EMPTY_CHUNK.0)),
             free_blocks: from_fn(|_| const {
                 Cell::new(null_mut())
             }),
-            alloc_balance: Cell::new(0)
         }
     }
 
@@ -145,10 +161,10 @@ impl ReBump{
     pub fn allocate(&self, layout: std::alloc::Layout)
         -> Option<std::ptr::NonNull<[u8]>>
     {
-        if layout.size() == 0{
+        /* if layout.size() == 0{
             hint::cold_path();
             todo!("ZST!");
-        }
+        } */
 
         // 0. Correct layout
         let layout = Self::correct_layout(layout);
@@ -224,8 +240,6 @@ impl ReBump{
             ptr
         };
 
-        self.alloc_balance.update(|i| i+1);
-
         let slice = ptr::slice_from_raw_parts_mut(ptr, layout.size());
         return Some(unsafe{NonNull::new_unchecked(slice)})
     }
@@ -255,8 +269,6 @@ impl ReBump{
 
         let free_block_root = unsafe{ self.free_blocks.get_unchecked(block_class_index) };
         Self::push_free_block(free_block_root, block_ptr);
-
-        self.alloc_balance.update(|i| i-1);
     }
 
     #[inline]
@@ -291,7 +303,7 @@ fn align_up<const I: usize>(n: usize) -> usize {
 
 /// Aligns a raw pointer UP to the nearest multiple of `align`.
 /// `align` MUST be a power of two (e.g., 1, 2, 4, 8, 16...).
-pub fn align_up_ptr<T>(ptr: *mut T, align: usize) -> *mut T {
+fn align_up_ptr<T>(ptr: *mut T, align: usize) -> *mut T {
     let new_addr = align_up_addr(ptr.addr(), align);
     ptr.with_addr(new_addr)
 }
@@ -367,5 +379,25 @@ mod tests{
             vec.push(i);
         }
         assert_equal(vec.iter().copied(), 0..SIZE);
+    }
+
+    #[test]
+    fn test_zst(){
+        const SIZE: usize = 2_000;
+        let allocator = ReBump::new();
+        // u128 has align 16 - this should force ReBump to use BlockHeader.
+        let mut vec: Vec<(), ReBump> = Vec::new_in(allocator);
+        for _ in 0..SIZE{
+            vec.push(());
+        }
+        assert_equal(vec.iter().copied(), (0..SIZE).map(|_| ()));
+        vec.clear();
+        vec.shrink_to_fit();
+
+        // This run should reuse blocks.
+        for _ in 0..SIZE{
+            vec.push(());
+        }
+        assert_equal(vec.iter().copied(), (0..SIZE).map(|_| ()));
     }
 }
