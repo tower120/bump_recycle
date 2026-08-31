@@ -6,7 +6,7 @@ unsafe impl Allocator for ReBump{
     fn allocate(&self, layout: std::alloc::Layout)
         -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError>
     {
-        Self::allocate(self, layout)
+        Self::allocate(self, layout).ok_or(std::alloc::AllocError)
     }
 
     #[inline(always)]

@@ -7,8 +7,11 @@ use std::{alloc::Layout, array::from_fn, cell::Cell, cmp, hint, ptr::{self, NonN
 mod allocator_api;
 
 /// Amount of block classes skipped in `free_blocks` "registry".
-pub const BLOCK_CLASS_SKIP: usize = 3;
-pub const MAX_SIZE: usize = u32::MAX as usize * 8;
+pub const BLOCK_CLASS_SKIP: usize = 3;              // TODO: ALIGN dependent?
+pub const MAX_SIZE: usize = u32::MAX as usize * 8;  // TODO: use ALIGN?
+
+/// Align used both for Chunk and for Block.
+pub const ALIGN: usize = 8;
 
 struct BlockHeader{
     ptr_offset: u32,
@@ -26,7 +29,7 @@ struct ChunkHeader{
     capacity: usize,
 }
 impl ChunkHeader{
-    /// Pointer has align 8.
+    /// Pointer has align ALIGN.
     pub fn data_ptr(this: NonNull<Self>) -> *mut u8 {
         let ptr: *mut u8 = this.as_ptr().cast();
         let p = unsafe{
@@ -39,7 +42,7 @@ impl ChunkHeader{
     pub fn allocate_chunk(prev_chunk: *mut ChunkHeader, capacity: usize) -> NonNull<Self> {
         use std::alloc::*;
         let size = size_of::<ChunkHeader>() + capacity;
-        let layout = Layout::from_size_align(size, 8).unwrap();
+        let layout = Layout::from_size_align(size, ALIGN).unwrap();
         let ptr = unsafe{ alloc(layout) };
         let this = NonNull::new(ptr.cast()).unwrap();
         unsafe {
@@ -57,7 +60,7 @@ impl ChunkHeader{
         use std::alloc::*;
         let capacity = unsafe{ (*this).capacity };
         let size = size_of::<ChunkHeader>() + capacity;
-        let layout = Layout::from_size_align(size, 8).unwrap();
+        let layout = Layout::from_size_align(size, ALIGN).unwrap();
         unsafe{
             dealloc(this.cast(), layout);
         }
@@ -126,16 +129,21 @@ impl ReBump{
 
     #[inline]
     fn correct_layout(layout: std::alloc::Layout) -> std::alloc::Layout{
-        let align = cmp::max(layout.align(), 8);
+        let align = cmp::max(layout.align(), ALIGN);
         unsafe{
             Layout::from_size_align_unchecked(layout.size(), align)
         }.pad_to_align()
     }
 
+    /// Perfectly aligned data, does not need BlockHeader information.
+    #[inline]
+    fn perfectly_aligned(layout: std::alloc::Layout) -> bool {
+        layout.align() <= ALIGN
+    }
 
     #[inline]
     pub fn allocate(&self, layout: std::alloc::Layout)
-        -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError>
+        -> Option<std::ptr::NonNull<[u8]>>
     {
         if layout.size() == 0{
             hint::cold_path();
@@ -145,14 +153,20 @@ impl ReBump{
         // 0. Correct layout
         let layout = Self::correct_layout(layout);
 
-        let max_padding_offset = layout.align() - 8;
+        // Will be compile-time generated most of the times.
+        let perfectly_aligned = Self::perfectly_aligned(layout);
         let block_size_exp = {
-            let block_size = layout.size() + max_padding_offset + size_of::<BlockHeader>();
+            let max_padding_offset = layout.align() - ALIGN;
+            let block_header_size = if !perfectly_aligned{size_of::<BlockHeader>()} else {0};
+            let block_size = layout.size() + max_padding_offset + block_header_size;
             ilog2_ceil(block_size) as usize    // rounding up
         };
         let block_class_index = block_size_exp - BLOCK_CLASS_SKIP;
 
-        assert!(block_class_index < 32, "Required layout size too big.");
+        if block_class_index >= 32{
+            // Required layout size is too big.
+            return None;
+        }
 
         let block_ptr = (||{
             // 1. Try `free_blocks` first
@@ -172,7 +186,7 @@ impl ReBump{
                 if requested_len > chunk.capacity{
                     hint::cold_path();
 
-                    // TODO: push biggest possible leftover as free block.
+                    // TODO: push biggest possible leftover as a free block.
 
                     let new_capacity =
                         cmp::max(
@@ -194,29 +208,50 @@ impl ReBump{
             unsafe{ data_ptr.add(start) }
         })();
 
-        let ptr = align_up_mut_ptr(unsafe{ block_ptr.add(size_of::<BlockHeader>()) }, layout.align());
-        // Write BlockHeader
-        unsafe {
-            let block_header_ptr: *mut BlockHeader = ptr.sub(size_of::<BlockHeader>()).cast();
-            block_header_ptr.write(BlockHeader {
-                ptr_offset : ptr.offset_from(block_ptr) as u32,
-                block_class: block_class_index as u32
-            });
-        }
+        let ptr = if perfectly_aligned{
+            // Don't add BlockHeader if we're perfectly aligned.
+            block_ptr
+        } else {
+            let ptr = align_up_ptr(unsafe{ block_ptr.add(size_of::<BlockHeader>()) }, layout.align());
+            // Write BlockHeader
+            unsafe {
+                let block_header_ptr: *mut BlockHeader = ptr.sub(size_of::<BlockHeader>()).cast();
+                block_header_ptr.write(BlockHeader {
+                    ptr_offset : ptr.offset_from(block_ptr) as u32,
+                    block_class: block_class_index as u32
+                });
+            }
+            ptr
+        };
 
         self.alloc_balance.update(|i| i+1);
 
         let slice = ptr::slice_from_raw_parts_mut(ptr, layout.size());
-        return Ok(unsafe{NonNull::new_unchecked(slice)})
+        return Some(unsafe{NonNull::new_unchecked(slice)})
     }
 
     pub unsafe fn deallocate(
         &self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout
     ) {
-        let ptr = ptr.as_ptr();
-        let block_header_ptr: *const BlockHeader = ptr.sub(size_of::<BlockHeader>()).cast();
-        let block_class_index = (*block_header_ptr).block_class as usize;
-        let block_ptr = ptr.sub((*block_header_ptr).ptr_offset as usize);
+        let (block_class_index, block_ptr) = if Self::perfectly_aligned(layout){
+            // We're perfectly aligned, we don't have BlockHeader.
+            // Calculate size that we used.
+            let layout = Self::correct_layout(layout);
+            let block_size_exp = {
+                let block_size = layout.size();
+                ilog2_ceil(block_size) as usize    // rounding up
+            };
+            let block_class_index = block_size_exp - BLOCK_CLASS_SKIP;
+            (block_class_index, ptr.as_ptr())
+        } else {
+            unsafe{
+                let ptr = ptr.as_ptr();
+                let block_header_ptr: *const BlockHeader = ptr.sub(size_of::<BlockHeader>()).cast();
+                let block_class_index = (*block_header_ptr).block_class as usize;
+                let block_ptr = ptr.sub((*block_header_ptr).ptr_offset as usize);
+                (block_class_index, block_ptr)
+            }
+        };
 
         let free_block_root = unsafe{ self.free_blocks.get_unchecked(block_class_index) };
         Self::push_free_block(free_block_root, block_ptr);
@@ -256,30 +291,25 @@ fn align_up<const I: usize>(n: usize) -> usize {
 
 /// Aligns a raw pointer UP to the nearest multiple of `align`.
 /// `align` MUST be a power of two (e.g., 1, 2, 4, 8, 16...).
-pub fn align_up_ptr<T>(ptr: *const T, align: usize) -> *const T {
-    align_up_addr(ptr.addr(), align) as *const T
+pub fn align_up_ptr<T>(ptr: *mut T, align: usize) -> *mut T {
+    let new_addr = align_up_addr(ptr.addr(), align);
+    ptr.with_addr(new_addr)
 }
 
-pub fn align_up_mut_ptr<T>(ptr: *mut T, align: usize) -> *mut T {
-    {
-        let new_addr = align_up_addr(ptr.addr(), align);
-        ptr.with_addr(new_addr)
-    }
-
-    // align_up_addr(ptr.addr(), align) as *mut T
-
-}
-
-pub fn align_up_addr(addr: usize, align: usize) -> usize {
+fn align_up_addr(addr: usize, align: usize) -> usize {
     debug_assert!(align.is_power_of_two());
     let align_min_1 = align - 1;
     (addr + align_min_1) & !(align_min_1)
 }
 
-/// MUST be non-zero
+/// MUST be > 1
+#[inline]
 fn ilog2_ceil(x: usize) -> u32 {
-    debug_assert!(x!=0);
-    usize::BITS - (x - 1).leading_zeros()
+    debug_assert!(x > 1);
+    if x <= 1 {
+        unsafe { std::hint::unreachable_unchecked() }
+    }
+    (x - 1).ilog2() + 1
 }
 
 #[cfg(test)]
@@ -298,5 +328,44 @@ mod tests{
         }
         assert_equal(vec, 0..80);
         println!("OK");
+    }
+
+    #[test]
+    fn test_block_reuse(){
+        const SIZE: usize = 32_000;
+        let allocator = ReBump::new();
+        let mut vec: Vec<_, ReBump> = Vec::new_in(allocator);
+        for i in 0..SIZE{
+            vec.push(i);
+        }
+        assert_equal(vec.iter().copied(), 0..SIZE);
+        vec.clear();
+        vec.shrink_to_fit();
+
+        // This run should reuse blocks.
+        for i in 0..SIZE{
+            vec.push(i);
+        }
+        assert_equal(vec.iter().copied(), 0..SIZE);
+    }
+
+    #[test]
+    fn test_block_reuse_w_header(){
+        const SIZE: u128 = 32_000;
+        let allocator = ReBump::new();
+        // u128 has align 16 - this should force ReBump to use BlockHeader.
+        let mut vec: Vec<u128, ReBump> = Vec::new_in(allocator);
+        for i in 0..SIZE{
+            vec.push(i);
+        }
+        assert_equal(vec.iter().copied(), 0..SIZE);
+        vec.clear();
+        vec.shrink_to_fit();
+
+        // This run should reuse blocks.
+        for i in 0..SIZE{
+            vec.push(i);
+        }
+        assert_equal(vec.iter().copied(), 0..SIZE);
     }
 }
