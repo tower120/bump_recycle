@@ -1,3 +1,32 @@
+//! [`ReBump`] is much like `bumpalo` - except it reuses deallocated memory.
+//!
+//! To put it dramatically - you basically don't need nor reset, nor scopes -
+//! if you can tolerate all your allocation sizes being aligned to POT,
+//! and you allocate/deallocated more or less the same layout sizes.
+//!
+//! See `/examples` for motivation examples.
+//!
+//! # How it works
+//!
+//! All memory allocated in POT size blocks. When you deallocated - that block
+//! stored in a linked list of the blocks with the same size.
+//! When you allocate - [`ReBump`] first look in a table for requested size
+//! (aligned to POT) - if there is one - it returns it, if no - it works exactly
+//! as bumpalo.
+//!
+//! ## Design choice
+//!
+//! [`ReBump`] does not unify or split deallocated blocks - thus it can only reuse
+//! block of requested size (aligned to POT). This is deliberately to simplify
+//! allocation process. Since blocks aligned to POT sizes - when you work with
+//! growing `Vec`s - you'll most likely will have blocks of needed size.
+//!
+//! ## Align
+//!
+//! All internal chunks and blocks have 8 bytes align.
+//! Requested layouts with align > 8 will store additional information block (8 bytes)
+//! before the begin of data block.
+//!
 //! # Maximum size
 //!
 //! Maximum size this allocator can allocate is `u32::MAX * 8` bytes.
@@ -12,6 +41,11 @@
 //! Such behavior does not brake `allocator_api` contract.
 //!
 //! Open an issue - if you think this should be different.
+//!
+//! # Features
+//!
+//! * `allocator_api` - for Rust's [allocation_api](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
+//! support.
 
 #![cfg_attr(feature = "allocator_api", feature(allocator_api))]
 
@@ -103,6 +137,12 @@ pub struct ReBump{
 }
 
 unsafe impl Send for ReBump{}
+
+impl Default for ReBump{
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ReBump{
     pub fn new() -> Self {
