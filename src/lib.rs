@@ -157,6 +157,39 @@ impl ReBump{
         layout.align() <= ALIGN
     }
 
+    /// Drops all chunks, but the very last one.
+    /// Drops all free blocks.
+    ///
+    /// In most cases you don't need this - since all freed blocks reused.
+    /// You may only need this for some pathological cases -
+    /// were you allocated 4Gb in 16 byte layouts, and now want to allocate
+    /// the same amount, but in 32 byte layouts - and you will never ever need
+    /// to allocate 16 byte layouts again - or tight on memory.
+    pub fn reset(&mut self){
+        // 1. Drop chunks
+        let mut root_chunk = self.root_chunk.get();
+        if root_chunk.as_ptr().cast_const() == &EMPTY_CHUNK.0{
+            // Do not have a single chunk allocated.
+            return;
+        }
+        // 1.1 Drop chunk chain, starting from prev.
+        unsafe{
+            let chunk = (root_chunk.as_mut()).prev_chunk;
+            Self::drop_chunk_chain(chunk);
+        }
+        // 1.2 Update root's prev and len.
+        unsafe{
+            let root_chunk = root_chunk.as_mut();
+            root_chunk.prev_chunk = &EMPTY_CHUNK.0 as *const ChunkHeader as * mut ChunkHeader;
+            root_chunk.len.set(0);
+        }
+
+        // 2. Clear free block "chains".
+        for free_block_root in &mut self.free_blocks{
+            free_block_root.set(null_mut());
+        }
+    }
+
     #[inline]
     pub fn allocate(&self, layout: std::alloc::Layout)
         -> Option<std::ptr::NonNull<[u8]>>
@@ -399,5 +432,27 @@ mod tests{
             vec.push(());
         }
         assert_equal(vec.iter().copied(), (0..SIZE).map(|_| ()));
+    }
+
+    #[test]
+    fn test_reset(){
+        const SIZE: usize = 3_000;
+        let mut allocator = ReBump::new();
+        allocator.reset();
+
+        {
+            let mut vec: Vec<_, &ReBump> = Vec::new_in(&allocator);
+            for i in 0..SIZE{
+                vec.push(i.to_string());
+            }
+            assert_equal(vec.iter().cloned(), (0..SIZE).map(|i| i.to_string()));
+        }
+        allocator.reset();
+
+        let mut vec: Vec<_, &ReBump> = Vec::new_in(&allocator);
+        for i in 0..SIZE{
+            vec.push(i.to_string());
+        }
+        assert_equal(vec.iter().cloned(), (0..SIZE).map(|i| i.to_string()));
     }
 }
