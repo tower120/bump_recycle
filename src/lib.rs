@@ -46,11 +46,6 @@
 //!
 //! * `allocator_api` - for Rust's [allocation_api](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
 //! support.
-//!
-//! # Known alternatives
-//!
-//! * (bumpalo)[https://crates.io/crates/bumpalo]
-//! * (bump_scope)[https://crates.io/crates/bump-scope]
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(feature = "allocator_api", feature(allocator_api))]
