@@ -1,7 +1,7 @@
 #![feature(allocator_api)]
 
 use std::rc::Rc;
-use recycled_bump::ReBump;
+use bump_recycle::ReBump;
 
 // There is no benefits of using Arc here - since Arc would be Send-able,
 // only if ReBump would be Sync-able.

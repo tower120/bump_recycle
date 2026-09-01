@@ -25,7 +25,7 @@ vec2.extend([1.0,2.0,3.0]);
 Let's say we need to make some structure that requires Vec of Vec's.
 Take as example a naive implementation of graph, DOM, or k-tree.
 
-```
+```rust
 struct S<T>{
     data: Vec<Vec<T>>   // patchwork of memory blocks inside
 }
@@ -37,14 +37,14 @@ memory for the inner Vec - it can't be reused this way.
 Now, imagine that we have some storage, that somehow magically could
 allocate all our inner Vec's tightly packed together. Let's use allocator concept
 for that, also let's imaging the following syntax exists:
-```
+```rust
 struct S<T>{
     memory: Alloc,  // a few monolithic memory blocks inside
     data: Vec<Vec<T, &'self Alloc>, &'self Alloc>
 }
 ```
 Now make it more realistic:
-```
+```rust
 struct S<T>{
     data: Vec<Vec<T, Rc<Alloc>>, Rc<Alloc>>
 }

@@ -2,7 +2,7 @@
 
 pub mod graph{
     use std::{rc::Rc};
-    use recycled_bump::ReBump;
+    use bump_recycle::ReBump;
 
     pub struct Node{
         out: Vec<usize/* node index */, Rc<ReBump>>
