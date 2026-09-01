@@ -2,7 +2,7 @@
 
 use bumpalo::Bump;
 use criterion::{criterion_group, criterion_main, Criterion};
-use recycled_bump::ReBump;
+use bump_recycle::ReBump;
 use std::{alloc::Layout, hint::black_box};
 
 fn generic_bench(count: usize){
