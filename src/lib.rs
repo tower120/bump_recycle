@@ -102,20 +102,29 @@ impl ChunkHeader{
     }
 
     // TODO: use allocator
-    pub fn allocate_chunk(prev_chunk: *mut ChunkHeader, capacity: usize) -> NonNull<Self> {
+    pub fn allocate_chunk(prev_chunk: *mut ChunkHeader, capacity: usize)
+        -> Option<NonNull<Self>>
+    {
         use std::alloc::*;
         let size = size_of::<ChunkHeader>() + capacity;
         let layout = Layout::from_size_align(size, ALIGN).unwrap();
+
+        // TODO: use size returned from allocator as capacity
         let ptr = unsafe{ alloc(layout) };
-        let this = NonNull::new(ptr.cast()).unwrap();
-        unsafe {
-            this.write(ChunkHeader{
-                prev_chunk,
-                len: Cell::new(0),
-                capacity,
-            });
+
+        let this = NonNull::new(ptr.cast());
+        if let Some(this) = this {
+            unsafe {
+                this.write(ChunkHeader{
+                    prev_chunk,
+                    len: Cell::new(0),
+                    capacity,
+                });
+            }
+            Some(this)
+        } else {
+            None
         }
-        this
     }
 
     #[inline]
@@ -268,11 +277,11 @@ impl ReBump{
             return None;
         }
 
-        let block_ptr = (||{
+        let block_ptr = 'out: {
             // 1. Try `free_blocks` first
             let free_block_root = unsafe{ self.free_blocks.get_unchecked(block_class_index) };
             if let Some(ptr) = Self::pop_free_block(free_block_root){
-                return ptr;
+                break 'out ptr;
             }
 
             let mut chunk_ptr = self.root_chunk.get();
@@ -293,7 +302,7 @@ impl ReBump{
                             align_up::<2>(requested_len),
                             chunk.capacity * 2
                         );
-                    chunk_ptr = ChunkHeader::allocate_chunk(self.root_chunk.get().as_ptr(), new_capacity);
+                    chunk_ptr = ChunkHeader::allocate_chunk(self.root_chunk.get().as_ptr(), new_capacity)?;
                     self.root_chunk.set(chunk_ptr);
                 }
             }
@@ -306,7 +315,7 @@ impl ReBump{
 
             let data_ptr = ChunkHeader::data_ptr(chunk_ptr);
             unsafe{ data_ptr.add(start) }
-        })();
+        };
 
         let ptr = if perfectly_aligned{
             // Don't add BlockHeader if we're perfectly aligned.
@@ -408,6 +417,7 @@ fn ilog2_ceil(x: usize) -> u32 {
     (x - 1).ilog2() + 1
 }
 
+#[cfg(feature = "allocator_api")]
 #[cfg(test)]
 mod tests{
     use super::*;
