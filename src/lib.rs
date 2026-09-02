@@ -51,6 +51,22 @@
 //!
 //! Open an issue - if you think this should be different.
 //!
+//! # Allocator
+//!
+//! [`ReBump`] can use user provided allocator itself. User provided allocator
+//! must implement crate's [`Allocator`] trait. Use wrappers from [`alloc`] module
+//! for that:
+//! ```
+//! # use bump_recycle::ReBump;
+//! use bump_recycle::alloc::AllocatorApiStd;
+//!
+//! let bumpalo = bumpalo::Bump::new();
+//! let allocator = ReBump::new_in(AllocatorApiStd(&bumpalo));
+//! ```
+//!
+//! [`Allocator`]: crate::alloc::Allocator
+//! [`alloc`]: crate::alloc
+//!
 //! # Features
 //!
 //! * `allocator_api` - for Rust's [allocator_api](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
@@ -59,6 +75,12 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(feature = "allocator_api", feature(allocator_api))]
 
+#[cfg(feature = "allocator_api")]
+#[cfg_attr(docsrs, doc(cfg(feature = "allocator_api")))]
+mod allocator_api;
+
+pub mod alloc;
+
 use std::{
     alloc::Layout,
     array::from_fn,
@@ -66,10 +88,7 @@ use std::{
     ptr::{self, NonNull, null_mut},
     cmp, hint,
 };
-
-#[cfg(feature = "allocator_api")]
-#[cfg_attr(docsrs, doc(cfg(feature = "allocator_api")))]
-mod allocator_api;
+use crate::alloc::Allocator;
 
 /// Amount of block classes skipped in `free_blocks` "registry".
 const BLOCK_CLASS_SKIP: usize = 3;              // TODO: ALIGN dependent?
@@ -101,19 +120,18 @@ impl ChunkHeader{
         }
     }
 
-    // TODO: use allocator
-    pub fn allocate_chunk(prev_chunk: *mut ChunkHeader, capacity: usize)
-        -> Option<NonNull<Self>>
-    {
-        use std::alloc::*;
+    pub fn allocate_chunk(
+        alloc: &impl Allocator, prev_chunk: *mut ChunkHeader, capacity: usize
+    ) -> Option<NonNull<Self>> {
         let size = size_of::<ChunkHeader>() + capacity;
         let layout = Layout::from_size_align(size, ALIGN).unwrap();
 
-        // TODO: use size returned from allocator as capacity
-        let ptr = unsafe{ alloc(layout) };
+        let ptr = unsafe { alloc.allocate_non_zst(layout) };
 
-        let this = NonNull::new(ptr.cast());
-        if let Some(this) = this {
+        // TODO: use size returned from allocator as capacity
+
+        if let Some(ptr) = ptr {
+            let this = unsafe{ NonNull::new_unchecked(ptr.as_ptr().cast()) };
             unsafe {
                 this.write(ChunkHeader{
                     prev_chunk,
@@ -128,13 +146,12 @@ impl ChunkHeader{
     }
 
     #[inline]
-    pub unsafe fn deallocate_chunk(this: *mut Self){
-        use std::alloc::*;
+    pub unsafe fn deallocate_chunk(alloc: &impl Allocator, this: *mut Self){
         let capacity = unsafe{ (*this).capacity };
         let size = size_of::<ChunkHeader>() + capacity;
         let layout = Layout::from_size_align(size, ALIGN).unwrap();
         unsafe{
-            dealloc(this.cast(), layout);
+            alloc.deallocate_non_zst(NonNull::new_unchecked(this.cast()), layout);
         }
     }
 }
@@ -149,28 +166,38 @@ static EMPTY_CHUNK: EmptyChunkHeader = EmptyChunkHeader(ChunkHeader {
     capacity: 0
 });
 
-pub struct ReBump{
+pub struct ReBump<Alloc: Allocator = crate::alloc::Global> {
     root_chunk : Cell<NonNull<ChunkHeader>>,
 
     /// each block size = 2^index + 8
     free_blocks: [Cell<*mut u8>; 32],
+
+    alloc: Alloc
 }
 
-unsafe impl Send for ReBump{}
+unsafe impl<Alloc: Allocator> Send for ReBump<Alloc>{}
 
-impl Default for ReBump{
+impl<Alloc: Default + Allocator> Default for ReBump<Alloc>{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ReBump{
-    pub fn new() -> Self {
+impl<Alloc: Allocator> ReBump<Alloc>{
+    pub fn new() -> Self
+    where
+        Alloc: Default
+    {
+        Self::new_in(Alloc::default())
+    }
+
+    pub fn new_in(alloc: Alloc) -> Self {
         Self {
             root_chunk: Cell::new(NonNull::from(&EMPTY_CHUNK.0)),
             free_blocks: from_fn(|_| const {
                 Cell::new(null_mut())
             }),
+            alloc
         }
     }
 
@@ -235,7 +262,7 @@ impl ReBump{
         // 1.1 Drop chunk chain, starting from prev.
         unsafe{
             let chunk = (root_chunk.as_mut()).prev_chunk;
-            Self::drop_chunk_chain(chunk);
+            self.drop_chunk_chain(chunk);
         }
         // 1.2 Update root's prev and len.
         unsafe{
@@ -302,7 +329,11 @@ impl ReBump{
                             align_up::<2>(requested_len),
                             chunk.capacity * 2
                         );
-                    chunk_ptr = ChunkHeader::allocate_chunk(self.root_chunk.get().as_ptr(), new_capacity)?;
+                    chunk_ptr = ChunkHeader::allocate_chunk(
+                        &self.alloc,
+                        self.root_chunk.get().as_ptr(),
+                        new_capacity
+                    )?;
                     self.root_chunk.set(chunk_ptr);
                 }
             }
@@ -365,26 +396,26 @@ impl ReBump{
     }
 
     #[inline]
-    unsafe fn drop_chunk_chain(mut chunk_head_ptr: *mut ChunkHeader){
+    unsafe fn drop_chunk_chain(&mut self, mut chunk_head_ptr: *mut ChunkHeader){
         while chunk_head_ptr.cast_const() != &EMPTY_CHUNK.0 {
             let next_chunk_head_ptr = {
                 let chunk = unsafe{ chunk_head_ptr.as_ref_unchecked() };
                 chunk.prev_chunk
             };
             unsafe{
-                ChunkHeader::deallocate_chunk(chunk_head_ptr);
+                ChunkHeader::deallocate_chunk(&self.alloc, chunk_head_ptr);
             }
             chunk_head_ptr = next_chunk_head_ptr
         }
     }
 }
 
-impl Drop for ReBump{
+impl<Alloc: Allocator> Drop for ReBump<Alloc>{
     #[inline]
     fn drop(&mut self) {
         unsafe{
             let root_chunk_ptr = self.root_chunk.get().as_ptr();
-            Self::drop_chunk_chain(root_chunk_ptr);
+            self.drop_chunk_chain(root_chunk_ptr);
         }
     }
 }
@@ -420,8 +451,9 @@ fn ilog2_ceil(x: usize) -> u32 {
 #[cfg(feature = "allocator_api")]
 #[cfg(test)]
 mod tests{
-    use super::*;
     use itertools::assert_equal;
+    use super::*;
+    use crate::alloc::AllocatorApiStd;
 
     #[test]
     fn test(){
@@ -515,5 +547,26 @@ mod tests{
             vec.push(i.to_string());
         }
         assert_equal(vec.iter().cloned(), (0..SIZE).map(|i| i.to_string()));
+    }
+
+    #[test]
+    fn test_allocator(){
+        let bumpalo = bumpalo::Bump::new();
+        let allocator = ReBump::new_in(AllocatorApiStd(&bumpalo));
+
+        const SIZE: usize = 4_000;
+        let mut vec = Vec::new_in(allocator);
+        for i in 0..SIZE{
+            vec.push(i);
+        }
+        assert_equal(vec.iter().copied(), 0..SIZE);
+        vec.clear();
+        vec.shrink_to_fit();
+
+        // This run should reuse blocks.
+        for i in 0..SIZE{
+            vec.push(i);
+        }
+        assert_equal(vec.iter().copied(), 0..SIZE);
     }
 }

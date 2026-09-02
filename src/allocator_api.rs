@@ -1,7 +1,7 @@
 use std::alloc::Allocator;
 use crate::ReBump;
 
-unsafe impl Allocator for ReBump{
+unsafe impl<Alloc: crate::alloc::Allocator> Allocator for ReBump<Alloc>{
     #[inline(always)]
     fn allocate(&self, layout: std::alloc::Layout)
         -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError>
