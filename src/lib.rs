@@ -427,7 +427,7 @@ fn align_up<const I: usize>(n: usize) -> usize {
 
 /// Aligns a raw pointer UP to the nearest multiple of `align`.
 /// `align` MUST be a power of two (e.g., 1, 2, 4, 8, 16...).
-fn align_up_ptr<T>(ptr: *mut T, align: usize) -> *mut T {
+fn align_up_ptr<T>(ptr: *mut u8, align: usize) -> *mut u8 {
     let new_addr = align_up_addr(ptr.addr(), align);
     ptr.with_addr(new_addr)
 }
