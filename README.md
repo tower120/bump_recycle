@@ -1,14 +1,18 @@
+[![Crates.io Version](https://img.shields.io/crates/v/bump-recycle)](https://crates.io/crates/bump_recycle)
+[![docs.rs](https://img.shields.io/docsrs/bump_recycle)](https://docs.rs/bump_recycle/)
+![Crates.io License](https://img.shields.io/crates/l/bump-recycle)
+
 # Recyclable bump allocator
 
 `bump_recycle` is a bump allocator (ala `bumpalo`), that can reuse deallocated
 memory blocks.
 
-See the documentation for details.
+See [the documentation](https://docs.rs/bump_recycle/) for details.
 
 ```rust
 let mut alloc = ReBump::new();
-let vec1 = Vec::new_in(&mut alloc);
-let vec2 = Vec::new_in(&mut alloc);
+let vec1 = Vec::new_in(&alloc);
+let vec2 = Vec::new_in(&alloc);
 
 vec1.extend([1,2,3]);
 // deallocate memory used by vec1.
@@ -21,6 +25,36 @@ vec2.extend([1.0,2.0,3.0]);
 ```
 
 # Motivation
+## `ReBump` against scoped bump
+
+```rust
+// let mut bump: Bump = bump_scope::Bump::new();
+// let mut alloc = bump.as_mut_scope();
+
+let mut alloc = ReBump::new();
+{
+    let mut v1 = Vec::new_in(&alloc);
+    // This will allocate chunks for [4, 8, 16] items -
+    // with only last one used in the end.
+    for i in 0..16 {
+        v1.push(i);
+    }
+
+    // Even thou v1 is not disposed - chunks [4, 8] are free -
+    // they will be used in process of filling v2.
+    let mut v2 = Vec::new_in(&alloc);
+    for i in 0..16{
+        v1.push(i);
+    }
+
+    // we're end with [4, 8, 16, 16] memory blocks.
+}
+```
+With scoped bump - you would end with `[4,8,16,4,8,16]` memory blocks.
+You will reclaim all memory back at the end of the scope - but in a
+process you'll need a bigger buffer. That could also mean more allocations.
+
+## `ReBump` as storage
 
 Let's say we need to make some structure that requires Vec of Vec's.
 Take as example a naive implementation of graph, DOM, or k-tree.
@@ -54,7 +88,6 @@ and we does not expose `Rc`s in any way - we can slap `impl Send` on it.
 
 Replace `Alloc` with `ReBump` - and here we are.
 
-## Motivation FAQ
 ### Why not Object Pool?
 
 With pool of removed inner Vec's you still need to:
@@ -77,7 +110,7 @@ run out of memory.
 
 # Overhead
 
-Each allocation request size aligned to POT.
+Each "allocation request size" will be aligned to POT.
 
 Only deallocated blocks of the same size as allocation request - can be reused
 (both aligned to POT).
@@ -88,10 +121,26 @@ See [/examples](https://github.com/tower120/bump_recycle/tree/main/examples) fol
 
 # Performance
 
-Preliminary benchmarks shows performance on par with `bumpalo`.
 See [/benches](https://github.com/tower120/bump_recycle/tree/main/benches) folder.
 
-TODO: concrete numbers here.
+Plain monotonic allocation.
+
+  Type    | ReBump   | bumpalo  |
+--------- | -------- | -------- |
+`[u64;1]` | 36.8 µs  | 43.4 µs  |
+`[u64;2]` | 43.3 µs  | 46.3 µs  |
+`[u64;4]` | 67.8 µs  | 67.5 µs  |
+`[u64;8]` | 205.3 µs | 223.8 µs |
+
+Allocate, deallocate, then allocate again. Simulates memory reuse.
+
+  Type    | ReBump   | bumpalo  |
+--------- | -------- | -------- |
+`[u64;1]` | 38.1 µs  | 88.1 µs  |
+`[u64;2]` | 49.8 µs  | 94.7 µs  |
+`[u64;4]` | 72.2 µs  | 245.1 µs |
+`[u64;8]` | 224.7 µs | 855.4 µs |
+
 
 # Known alternatives
 

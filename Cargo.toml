@@ -27,5 +27,9 @@ name = "alloc"
 harness = false
 
 [[bench]]
+name = "alloc_dealloc_alloc"
+harness = false
+
+[[bench]]
 name = "vec"
 harness = false
