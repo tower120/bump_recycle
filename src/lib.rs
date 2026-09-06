@@ -57,11 +57,14 @@
 //! must implement crate's [`Allocator`] trait. Use wrappers from [`alloc`] module
 //! for that:
 //! ```
-//! # use bump_recycle::ReBump;
+//! # #[cfg(feature = "allocator_api")]
+//! # {
+//! use bump_recycle::ReBump;
 //! use bump_recycle::alloc::AllocatorApiStd;
 //!
 //! let bumpalo = bumpalo::Bump::new();
 //! let allocator = ReBump::new_in(AllocatorApiStd(&bumpalo));
+//! # }
 //! ```
 //!
 //! [`Allocator`]: crate::alloc::Allocator
