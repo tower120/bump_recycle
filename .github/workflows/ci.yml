@@ -39,11 +39,7 @@ jobs:
           components: miri
       - uses: taiki-e/install-action@cargo-nextest
       - uses: actions/checkout@v6
-
-      - run: cargo hack test --feature-powerset
-        env:
-          RUSTUP_TOOLCHAIN: nightly
-          RUSTFLAGS: "--deny warnings"
+      - run: cargo +nightly miri nextest run -j6 --all-features
 
   benchmarks:
     runs-on: ubuntu-latest
