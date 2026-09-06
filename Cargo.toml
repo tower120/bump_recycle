@@ -22,6 +22,14 @@ bumpalo = {version = "=3.20.3", features=["allocator_api"]}
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[[example]]
+name = "graph"
+required-features = ["allocator_api"]
+
+[[example]]
+name = "rc_alloc"
+required-features = ["allocator_api"]
+
 [[bench]]
 name = "alloc"
 harness = false
