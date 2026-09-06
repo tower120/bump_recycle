@@ -1,6 +1,7 @@
 [![Crates.io Version](https://img.shields.io/crates/v/bump-recycle)](https://crates.io/crates/bump_recycle)
 [![docs.rs](https://img.shields.io/docsrs/bump_recycle)](https://docs.rs/bump_recycle/)
 ![Crates.io License](https://img.shields.io/crates/l/bump-recycle)
+[![CI](https://github.com/tower120/bump_recycle/actions/workflows/ci.yml/badge.svg)](https://github.com/tower120/bump_recycle/actions/workflows/ci.yml)
 
 # Recyclable bump allocator
 

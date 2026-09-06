@@ -1,6 +1,6 @@
 [package]
 name = "bump_recycle"
-version = "0.1.0-alpha"
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 categories = ["memory-management"]
