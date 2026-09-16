@@ -26,6 +26,9 @@ pub mod graph{
     // from different threads.
     unsafe impl Send for Graph{}
 
+    // In this concrete case, we're Sync too.
+    unsafe impl Sync for Graph{}
+
     impl Graph{
         pub fn new() -> Graph{
             Graph{
